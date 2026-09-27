@@ -339,6 +339,17 @@
     .range-table-wrap td:first-child, .range-table-wrap td:nth-child(2),
     .range-table-wrap th:first-child, .range-table-wrap th:nth-child(2) { text-align: left; }
     .range-empty { color: var(--text-muted); text-align: center; padding: 1.2rem; font-size: 0.9rem; }
+    .prov-filter-bar {
+      display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 0.6rem 1rem; margin-bottom: 0.75rem;
+      font-size: 0.9rem; font-weight: 600;
+    }
+    .prov-clear-btn {
+      border: 1px solid var(--border); background: transparent; color: var(--text);
+      border-radius: 8px; padding: 0.3rem 0.8rem; font-size: 0.8rem; cursor: pointer;
+    }
+    .prov-clear-btn:hover { border-color: var(--text-muted); background: var(--card-hover); }
     @media (max-width: 640px) {
       header h1 { font-size: 1.4rem; }
       .net-item .value { font-size: 1rem; }
@@ -1085,7 +1096,7 @@ function buildGeoCharts(data, code) {
   provCard.className = "chart-card " + (meta.cls || "");
   provCard.innerHTML = `
     <div class="chart-header">
-      <div class="chart-title">分省份仓单<span>${meta.name} · ${data.data_date || ""}</span></div>
+      <div class="chart-title">分省份仓单<span>${meta.name} · ${data.data_date || ""} · 点击省份查看该省仓库明细</span></div>
     </div>
     <div class="chart-wrap" style="height:${Math.max(220, provRanked.length * 32 + 48)}px"><div id="chart-geo-prov"></div></div>
   `;
@@ -1110,6 +1121,27 @@ function buildGeoCharts(data, code) {
     provRanked.map((_, i) => provColors[i % provColors.length]));
   hBarChart("chart-geo-region", regionRanked.map(x => x[0]), regionRanked.map(x => x[1]),
     regionRanked.map(x => regionColors[x[0]] || "#94a3b8"));
+
+  // 点击省份条形 → 明细表按省过滤（DOM click + y 坐标手动换算类目）
+  const provWrap = document.getElementById("chart-geo-prov");
+  if (provWrap) provWrap.addEventListener("click", (ev) => {
+    const inst = chartInstances["chart-geo-prov"];
+    if (!inst) return;
+    const opt = inst.getOption();
+    const grid0 = opt.grid && opt.grid[0];
+    const yAxis0 = opt.yAxis && opt.yAxis[0];
+    if (!grid0 || !yAxis0 || !Array.isArray(yAxis0.data) || !yAxis0.data.length) return;
+    const rect = provWrap.getBoundingClientRect();
+    const y = ev.clientY - rect.top;
+    const gTop = grid0.top || 10;
+    const gBottom = grid0.bottom || 8;
+    const h = rect.height - gTop - gBottom;
+    if (h <= 0 || y < gTop || y > rect.height - gBottom) return;
+    const n = yAxis0.data.length;
+    const idx = Math.round((rect.height - gBottom - y) / (h / n) - 0.5);
+    if (idx < 0 || idx >= n) return;
+    applyProvFilter(active, yAxis0.data[idx]);
+  });
 
   const hasHistory = ALL_DAYS && Object.keys(ALL_DAYS).length > 5;
   if (hasHistory) {
@@ -1449,6 +1481,89 @@ function renderRangeResult(res) {
   box.innerHTML = html;
 }
 
+// ===================== 分省筛选（点击省份条形图 → 明细表按省过滤） =====================
+let __provFilter = null;  // {code, prov} | null
+
+function provFilterBarHtml(code, prov) {
+  const meta = VARIETY_META[code] || { name: code };
+  return `<div class="prov-filter-bar">
+    当前筛选：${meta.name} · ${prov}
+    <button type="button" class="prov-clear-btn" onclick="clearProvFilter()">显示全部</button>
+  </div>`;
+}
+function renderWarehouseTable(panel, code, data, provFilter) {
+  const all = ((data && data.details && data.details[code]) || []).slice();
+  const filter = (provFilter && provFilter.code === code) ? provFilter : null;
+  const list = filter ? all.filter(w => resolveProvince(w.warehouse) === filter.prov) : all;
+  const isFiltered = !!filter;
+  const filterBar = isFiltered ? provFilterBarHtml(code, filter.prov) : "";
+
+  if (!list.length) {
+    panel.innerHTML = filterBar
+      + `<div class="table-wrap" style="padding:1.5rem;text-align:center;color:var(--text-muted);">${isFiltered ? "该省暂无仓库明细" : "暂无仓库明细"}</div>`;
+    return;
+  }
+  const rows = list.map(w => {
+    const capOcc = capCellHtml(code, w.warehouse, list);
+    return `
+      <tr class="wh-row" data-code="${code}" data-wh="${String(w.warehouse).replace(/"/g, "&quot;")}" data-tm="${String(w.trademark || "").replace(/"/g, "&quot;")}" title="点击查看季节性图">
+        <td>${w.warehouse}</td>
+        <td>${w.trademark || "—"}</td>
+        <td>${fmt(w.last)}</td>
+        <td class="pos">${fmt(w.reg)}</td>
+        <td class="neg">${fmt(w.logout)}</td>
+        <td>${fmt(w.today)}</td>
+        <td class="${posNegClass(w.diff)}">${fmtDiff(w.diff)}</td>
+        <td class="${posNegClass(w.weekDiff)}">${fmtDiff(w.weekDiff)}</td>
+        <td class="${posNegClass(w.monthDiff)}">${fmtDiff(w.monthDiff)}</td>
+        <td>${capOcc.cap}</td>
+        <td>${capOcc.occ}</td>
+      </tr>`;
+  }).join("");
+  panel.innerHTML = filterBar + `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>仓库 / 厂库</th>
+            <th>商标名称</th>
+            <th>昨日仓单</th>
+            <th>注册量</th>
+            <th>注销量</th>
+            <th>今日仓单</th>
+            <th>日变化</th>
+            <th>周变化</th>
+            <th>月变化</th>
+            <th>核定库容</th>
+            <th>占用比例</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="cap-note">仓库数字是交易所公布的最低保障库容（碳酸锂仓库2023年已由2000吨调至5000吨），不是物理最大库容，仓单超过保障很常见。厂库才是标准仓单硬上限。占用=该库仓单合计（吨）÷核定库容。碳酸锂1吨/手、多晶硅3吨/手、工业硅5吨/手。</p>
+  `;
+}
+function clearProvFilter() {
+  __provFilter = null;
+  const cur = document.querySelector("#tabs .tab.active");
+  const code = cur ? cur.dataset.code : null;
+  if (window.__lastData) render(window.__lastData);
+  if (code) {
+    const tab = document.querySelector('#tabs .tab[data-code="' + code + '"]');
+    if (tab && !tab.classList.contains("active")) tab.click();
+  }
+}
+function applyProvFilter(code, prov) {
+  __provFilter = { code, prov };
+  const panel = document.getElementById("panel-" + code);
+  if (panel) renderWarehouseTable(panel, code, window.__lastData || EMBEDDED_DATA, __provFilter);
+  const dp = document.getElementById("detail-panels");
+  if (dp) dp.scrollIntoView({ block: "start", behavior: "smooth" });
+  showMsg("已按省份筛选：" + prov + "（点“显示全部”恢复）", "info");
+  setTimeout(hideMsg, 2500);
+}
+
 // ===================== 主渲染 =====================
 function inferRowFlow(w) {
   let reg = Number(w.reg) || 0;
@@ -1576,50 +1691,7 @@ function render(data) {
     panel.className = "detail-panel" + (idx === 0 ? " active" : "");
     panel.id = "panel-" + code;
 
-    if (!list.length) {
-      panel.innerHTML = `<div class="table-wrap" style="padding:1.5rem;text-align:center;color:var(--text-muted);">暂无仓库明细</div>`;
-    } else {
-      const rows = list.map(w => {
-        const capOcc = capCellHtml(code, w.warehouse, list);
-        return `
-        <tr class="wh-row" data-code="${code}" data-wh="${String(w.warehouse).replace(/"/g, "&quot;")}" data-tm="${String(w.trademark || "").replace(/"/g, "&quot;")}" title="点击查看季节性图">
-          <td>${w.warehouse}</td>
-          <td>${w.trademark || "—"}</td>
-          <td>${fmt(w.last)}</td>
-          <td class="pos">${fmt(w.reg)}</td>
-          <td class="neg">${fmt(w.logout)}</td>
-          <td>${fmt(w.today)}</td>
-          <td class="${posNegClass(w.diff)}">${fmtDiff(w.diff)}</td>
-          <td class="${posNegClass(w.weekDiff)}">${fmtDiff(w.weekDiff)}</td>
-          <td class="${posNegClass(w.monthDiff)}">${fmtDiff(w.monthDiff)}</td>
-          <td>${capOcc.cap}</td>
-          <td>${capOcc.occ}</td>
-        </tr>`;
-      }).join("");
-      panel.innerHTML = `
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>仓库 / 厂库</th>
-                <th>商标名称</th>
-                <th>昨日仓单</th>
-                <th>注册量</th>
-                <th>注销量</th>
-                <th>今日仓单</th>
-                <th>日变化</th>
-                <th>周变化</th>
-                <th>月变化</th>
-                <th>核定库容</th>
-                <th>占用比例</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <p class="cap-note">仓库数字是交易所公布的最低保障库容（碳酸锂仓库2023年已由2000吨调至5000吨），不是物理最大库容，仓单超过保障很常见。厂库才是标准仓单硬上限。占用=该库仓单合计（吨）÷核定库容。碳酸锂1吨/手、多晶硅3吨/手、工业硅5吨/手。</p>
-      `;
-    }
+    renderWarehouseTable(panel, code, data, __provFilter);
     panelsEl.appendChild(panel);
   });
 
