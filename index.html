@@ -106,8 +106,9 @@
     .card {
       background: var(--card); border: 1px solid var(--border); border-radius: 16px;
       padding: 1.5rem; transition: transform 0.2s, background 0.2s; position: relative; overflow: hidden;
+      cursor: pointer;
     }
-    .card:hover { transform: translateY(-2px); background: var(--card-hover); }
+    .card:hover { transform: translateY(-2px); background: var(--card-hover); border-color: var(--text-muted); }
     .card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
     .card.lc::before { background: var(--lc); }
     .card.ps::before { background: var(--ps); }
@@ -1228,51 +1229,56 @@ function drawSeasonModal(series, title, sub) {
     yearMaps[y] = {};
     series.filter(p => p.date.startsWith(y)).forEach(p => { yearMaps[y][p.date.slice(5)] = p.qty; });
   });
+  const seriesData = years.map((y, yi) => ({
+    name: y + "年", type: "line",
+    data: mdLabels.map(md => (yearMaps[y][md] != null ? yearMaps[y][md] : null)),
+    lineStyle: { width: 2, color: YEAR_COLORS[yi % YEAR_COLORS.length] },
+    itemStyle: { color: YEAR_COLORS[yi % YEAR_COLORS.length] },
+    showSymbol: false, connectNulls: true
+  }));
 
-  modalChart = echarts.init(chartEl, null, { renderer: "canvas" });
-  const t = chartTheme();
-  modalChart.setOption({
-    backgroundColor: "transparent",
-    tooltip: {
-      trigger: "axis",
-      formatter: function (params) {
-        let html = "<div style='font-weight:600'>同期 " + (params[0] ? params[0].axisValue : "") + "</div>";
-        (params || []).forEach(p => {
-          if (p.value == null || isNaN(p.value)) return;
-          html += `<div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
-            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${p.color};flex:none"></span>
-            ${p.seriesName}：<b>${Number(p.value).toLocaleString("zh-CN")} 手</b></div>`;
-        });
-        return html;
-      }
-    },
-    legend: {
-      top: 0, type: "scroll", textStyle: { color: t.legend, fontSize: 12 },
-      itemWidth: 14, itemHeight: 8
-    },
-    grid: { top: 42, left: 64, right: 20, bottom: 44 },
-    xAxis: {
-      type: "category", data: mdLabels,
-      name: "月-日（多年对齐）", nameTextStyle: { color: t.tick },
-      axisLine: { lineStyle: { color: t.grid } },
-      axisTick: { show: false },
-      axisLabel: { color: t.tick, rotate: 45, fontSize: 11, hideOverlap: true }
-    },
-    yAxis: {
-      type: "value",
-      name: "仓单量（手）", nameTextStyle: { color: t.tick },
-      axisLabel: { color: t.tick, fontSize: 11, formatter: v => Number(v).toLocaleString("zh-CN") },
-      splitLine: { lineStyle: { color: t.grid } }
-    },
-    series: years.map((y, yi) => ({
-      name: y + "年", type: "line",
-      data: mdLabels.map(md => (yearMaps[y][md] != null ? yearMaps[y][md] : null)),
-      lineStyle: { width: 2, color: YEAR_COLORS[yi % YEAR_COLORS.length] },
-      itemStyle: { color: YEAR_COLORS[yi % YEAR_COLORS.length] },
-      showSymbol: false, connectNulls: true
-    }))
+  const backdrop = document.getElementById("wh-modal");
+  backdrop.classList.add("open");
+  // 先显示弹窗、等布局完成后再初始化图表，避免容器尺寸为 0 导致空白
+  requestAnimationFrame(() => {
+    modalChart = echarts.init(chartEl, null, { renderer: "canvas" });
+    const t = chartTheme();
+    modalChart.setOption({
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis",
+        formatter: function (params) {
+          let html = "<div style='font-weight:600'>同期 " + (params[0] ? params[0].axisValue : "") + "</div>";
+          (params || []).forEach(p => {
+            if (p.value == null || isNaN(p.value)) return;
+            html += `<div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+              <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${p.color};flex:none"></span>
+              ${p.seriesName}：<b>${Number(p.value).toLocaleString("zh-CN")} 手</b></div>`;
+          });
+          return html;
+        }
+      },
+      legend: {
+        top: 0, type: "scroll", textStyle: { color: t.legend, fontSize: 12 },
+        itemWidth: 14, itemHeight: 8
+      },
+      grid: { top: 42, left: 64, right: 20, bottom: 44 },
+      xAxis: {
+        type: "category", data: mdLabels,
+        name: "月-日（多年对齐）", nameTextStyle: { color: t.tick },
+        axisLine: { lineStyle: { color: t.grid } },
+        axisTick: { show: false },
+        axisLabel: { color: t.tick, rotate: 45, fontSize: 11, hideOverlap: true }
+      },
+      yAxis: {
+        type: "value",
+        name: "仓单量（手）", nameTextStyle: { color: t.tick },
+        axisLabel: { color: t.tick, fontSize: 11, formatter: v => Number(v).toLocaleString("zh-CN") },
+        splitLine: { lineStyle: { color: t.grid } }
+      },
+      series: seriesData
+    });
   });
-  document.getElementById("wh-modal").classList.add("open");
 }
 function closeWarehouseModal() {
   const backdrop = document.getElementById("wh-modal");
@@ -1499,7 +1505,7 @@ function render(data) {
     const weekD = s.weekDiff != null ? s.weekDiff : 0;
     const monthD = s.monthDiff != null ? s.monthDiff : 0;
     return `
-      <div class="card ${meta.cls}">
+      <div class="card ${meta.cls}" data-code="${code}" title="点击进入${s.variety}板块">
         <div class="card-header">
           <div class="card-title">${s.variety}</div>
           <div class="card-code">${s.code}</div>
@@ -1556,6 +1562,7 @@ function render(data) {
     const tab = document.createElement("button");
     tab.className = "tab" + (idx === 0 ? " active" : "");
     tab.textContent = s.variety;
+    tab.dataset.code = code;
     tab.onclick = () => {
       document.querySelectorAll("#tabs .tab").forEach(x => x.classList.remove("active"));
       document.querySelectorAll(".detail-panel").forEach(x => x.classList.remove("active"));
@@ -1720,6 +1727,18 @@ async function autoRefresh() {
 // ===================== 事件绑定与初始化 =====================
 (function init() {
   try {
+    const cardsEl = document.getElementById("cards");
+    if (cardsEl) cardsEl.addEventListener("click", (e) => {
+      const card = e.target.closest(".card");
+      if (!card) return;
+      const code = card.getAttribute("data-code");
+      if (!code) return;
+      const tab = document.querySelector('#tabs .tab[data-code="' + code + '"]');
+      if (!tab) return;
+      if (!tab.classList.contains("active")) tab.click();
+      const tabsEl = document.getElementById("tabs");
+      if (tabsEl) tabsEl.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
     document.getElementById("detail-panels").addEventListener("click", (e) => {
       const tr = e.target.closest("tr.wh-row");
       if (!tr) return;
