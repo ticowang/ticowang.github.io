@@ -288,10 +288,63 @@
     .occ-mid i { background: #fbbf24; }
     .occ-high i { background: #f87171; }
     .cap-note { font-size: 0.75rem; color: var(--text-muted); margin: 0.4rem 0 0; }
+    .range-panel {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 16px; padding: 1rem 1.25rem; margin: 0.25rem 0 1.5rem;
+    }
+    .range-controls {
+      display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    }
+    .range-controls label {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      font-size: 0.85rem; color: var(--text-muted);
+    }
+    .range-controls input[type="date"] {
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.4rem 0.55rem; font-size: 0.85rem;
+    }
+    .range-controls input[type="date"]:focus { outline: none; border-color: #60a5fa; }
+    .range-sep { color: var(--text-muted); font-size: 0.85rem; }
+    .range-btn {
+      border: none; background: #60a5fa; color: #fff;
+      border-radius: 8px; padding: 0.45rem 1.1rem;
+      font-size: 0.85rem; font-weight: 600; cursor: pointer;
+    }
+    .range-btn:hover { background: #3b82f6; }
+    .range-btn:disabled { opacity: 0.6; cursor: wait; }
+    .range-cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem; margin-top: 1rem;
+    }
+    .range-card { margin: 0; }
+    .range-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 0.55rem 0.9rem; margin-top: 0.6rem;
+    }
+    .range-item .label { font-size: 0.75rem; color: var(--text-muted); }
+    .range-item .value { font-size: 1.05rem; font-weight: 700; }
+    .range-table-wrap { margin-top: 1.1rem; }
+    .range-sub-title {
+      font-size: 0.95rem; margin: 0 0 0.5rem;
+      display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+    }
+    .range-sub-title .hint { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; }
+    .range-table-wrap table { width: 100%; }
+    .range-table-wrap td, .range-table-wrap th {
+      white-space: nowrap; padding: 0.42rem 0.6rem;
+      font-size: 0.85rem; text-align: right;
+    }
+    .range-table-wrap td:first-child, .range-table-wrap td:nth-child(2),
+    .range-table-wrap th:first-child, .range-table-wrap th:nth-child(2) { text-align: left; }
+    .range-empty { color: var(--text-muted); text-align: center; padding: 1.2rem; font-size: 0.9rem; }
     @media (max-width: 640px) {
       header h1 { font-size: 1.4rem; }
       .net-item .value { font-size: 1rem; }
       .chart-wrap { height: 240px; }
+      .range-cards { grid-template-columns: 1fr; }
+      .range-controls label { width: 100%; justify-content: space-between; }
+      .range-controls input[type="date"] { font-size: 16px; }
     }
   </style>
 </head>
@@ -326,6 +379,17 @@
 
     <div id="content" style="display:none;">
       <div class="cards" id="cards"></div>
+
+      <h2 class="section-title">区间分析<span class="hint">选择起止日期 · 统计区间净变化 / 累计注册 / 累计注销 · 点击厂家或仓库行查看季节图</span></h2>
+      <div class="range-panel">
+        <div class="range-controls">
+          <label>起始日期<input type="date" id="range-start" title="起始日期"></label>
+          <span class="range-sep">至</span>
+          <label>终止日期<input type="date" id="range-end" title="终止日期"></label>
+          <button class="range-btn" id="range-btn" onclick="runRangeAnalysis()">分析</button>
+        </div>
+        <div id="range-result"></div>
+      </div>
 
       <h2 class="section-title">仓单数量历史变化<span class="hint">多年同期对比</span></h2>
       <div id="charts"></div>
@@ -910,7 +974,7 @@ function buildTrademarkCharts(data) {
   barCard.className = "chart-card ps";
   barCard.innerHTML = `
     <div class="chart-header">
-      <div class="chart-title">商标仓单结构<span>${data.data_date || ""} · 各商标仓单量合计</span></div>
+      <div class="chart-title">商标仓单结构<span>${data.data_date || ""} · 各商标仓单量合计 · 点击条形查看该厂家季节图</span></div>
     </div>
     <div class="chart-wrap" style="height:${Math.max(220, ranked.length * 36 + 40)}px"><div id="chart-tm-bar"></div></div>
   `;
@@ -921,6 +985,25 @@ function buildTrademarkCharts(data) {
   } else {
     hBarChart("chart-tm-bar", ranked.map(x => x[0]), ranked.map(x => x[1]),
       ranked.map((_, i) => barColors[i % barColors.length]));
+    // 点击横条查看该厂家季节图：DOM click + 按 y 坐标手动换算类目（不依赖 zrender 命中检测 / convertFromPixel）
+    const wrap = document.getElementById("chart-tm-bar");
+    if (wrap) wrap.addEventListener("click", (ev) => {
+      const inst = chartInstances["chart-tm-bar"];
+      if (!inst) return;
+      const opt = inst.getOption();
+      const grid0 = opt.grid && opt.grid[0];
+      const yAxis0 = opt.yAxis && opt.yAxis[0];
+      if (!grid0 || !yAxis0 || !Array.isArray(yAxis0.data) || !yAxis0.data.length) return;
+      const rect = wrap.getBoundingClientRect();
+      const y = ev.clientY - rect.top;
+      const gTop = grid0.top || 10;
+      const gBottom = grid0.bottom || 8;
+      const h = rect.height - gTop - gBottom;
+      if (h <= 0 || y < gTop || y > rect.height - gBottom) return;
+      const n = yAxis0.data.length;
+      const idx = Math.round((rect.height - gBottom - y) / (h / n) - 0.5);
+      if (idx >= 0 && idx < n) openTrademarkModal("ps", yAxis0.data[idx]);
+    });
   }
 
   const tmNames = ranked.map(x => x[0]);
@@ -1087,11 +1170,42 @@ async function openWarehouseModal(code, warehouse, trademark) {
   await ensureDaysLoaded();
   const meta = VARIETY_META[code] || { name: code };
   const tm = trademark || "";
-  document.getElementById("wh-modal-title").textContent = warehouse + (tm ? " · " + tm : "");
-  document.getElementById("wh-modal-sub").textContent =
-    meta.name + " · 仓单量多年同期对比（点击空白处或 × 关闭）";
-
+  const title = warehouse + (tm ? " · " + tm : "");
+  const sub = meta.name + " · 仓单量多年同期对比（点击空白处或 × 关闭）";
   const series = extractWarehouseSeries(code, warehouse, tm);
+  drawSeasonModal(series, title, sub);
+}
+
+function extractTrademarkSeries(code, tm) {
+  const key = tm || "（无商标）";
+  const points = [];
+  Object.keys(ALL_DAYS).forEach(date => {
+    const snap = ALL_DAYS[date];
+    const rows = (snap.details && snap.details[code]) || [];
+    let qty = 0, found = false;
+    rows.forEach(r => {
+      const rtm = (r.trademark && String(r.trademark).trim()) ? String(r.trademark).trim() : "（无商标）";
+      if (rtm === key) { qty += Number(r.today) || 0; found = true; }
+    });
+    if (found) points.push({ date, qty });
+  });
+  points.sort((a, b) => a.date.localeCompare(b.date));
+  return points;
+}
+
+async function openTrademarkModal(code, trademark) {
+  await ensureDaysLoaded();
+  const meta = VARIETY_META[code] || { name: code };
+  const tm = trademark || "（无商标）";
+  const title = tm;
+  const sub = meta.name + " · 该厂家仓单量多年同期对比（点击空白处或 × 关闭）";
+  const series = extractTrademarkSeries(code, tm);
+  drawSeasonModal(series, title, sub);
+}
+
+function drawSeasonModal(series, title, sub) {
+  document.getElementById("wh-modal-title").textContent = title;
+  document.getElementById("wh-modal-sub").textContent = sub;
   const emptyEl = document.getElementById("wh-modal-empty");
   const chartEl = document.getElementById("wh-modal-chart");
   if (modalChart) { try { modalChart.dispose(); } catch (e) {} modalChart = null; }
@@ -1164,6 +1278,169 @@ function closeWarehouseModal() {
   const backdrop = document.getElementById("wh-modal");
   if (backdrop) backdrop.classList.remove("open");
   if (modalChart) { try { modalChart.dispose(); } catch (e) {} modalChart = null; }
+}
+
+// ===================== 区间分析（起止日期） =====================
+function setRangeInputs() {
+  const s = document.getElementById("range-start");
+  const e = document.getElementById("range-end");
+  if (!s || !e) return;
+  const dates = getAvailableDates(window.__lastData || EMBEDDED_DATA);
+  if (!dates.length) return;
+  const min = dates[dates.length - 1], max = dates[0];
+  s.min = min; s.max = max; e.min = min; e.max = max;
+  if (!s.value) s.value = dates[Math.min(29, dates.length - 1)]; // 默认最近30个交易日
+  if (!e.value) e.value = max;
+}
+async function runRangeAnalysis() {
+  hideMsg();
+  const btn = document.getElementById("range-btn");
+  const s = document.getElementById("range-start").value;
+  const e = document.getElementById("range-end").value;
+  if (!s || !e) { showMsg("请选择起始和终止日期。", "error"); return; }
+  if (s > e) { showMsg("起始日期不能晚于终止日期。", "error"); return; }
+  btn.disabled = true;
+  btn.textContent = "分析中…";
+  try {
+    await ensureDaysLoaded();
+    const res = analyzeRange(s, e);
+    if (!res.dates.length) { showMsg("该区间内没有交易日数据，请检查起止日期。", "error"); return; }
+    renderRangeResult(res);
+    showMsg("区间 " + s + " 至 " + e + " 共 " + res.dates.length + " 个交易日", "success");
+    setTimeout(hideMsg, 3000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "分析";
+  }
+}
+function analyzeRange(start, end) {
+  const dates = Object.keys(ALL_DAYS).filter(d => d >= start && d <= end).sort();
+  const byCode = {};
+  const byTm = {};
+  const byWh = {};
+  // 预扫区间：收集出现的品种 / 厂家 / 仓库全集（避免首日缺某品种导致漏统计）
+  dates.forEach(d => {
+    const sum = ALL_DAYS[d].summary || {};
+    VARIETY_ORDER.forEach(c => {
+      if (sum[c] && !byCode[c]) {
+        byCode[c] = { code: c, name: (sum[c].variety || c), startQty: null, endQty: null, reg: 0, logout: 0, days: 0 };
+      }
+    });
+    const snap = ALL_DAYS[d];
+    Object.keys(byCode).forEach(c => {
+      const rows = (snap.details && snap.details[c]) || [];
+      rows.forEach(r => {
+        if (c === "ps" && r.trademark && String(r.trademark).trim()) {
+          const tm = String(r.trademark).trim();
+          if (!byTm[tm]) byTm[tm] = { name: tm, startQty: null, endQty: null, reg: 0, logout: 0, days: 0 };
+        }
+        const wkey = c + "|" + r.warehouse + "|" + (r.trademark || "");
+        if (!byWh[wkey]) byWh[wkey] = { code: c, wh: r.warehouse, tm: r.trademark || "", startQty: null, endQty: null, reg: 0, logout: 0 };
+      });
+    });
+  });
+  dates.forEach((d, i) => {
+    const snap = ALL_DAYS[d];
+    const sum = snap.summary || {};
+    Object.keys(byCode).forEach(c => {
+      const s = sum[c];
+      if (!s) return;
+      const acc = byCode[c];
+      if (i === 0) acc.startQty = Number(s.wbillQty) || 0;
+      acc.endQty = Number(s.wbillQty) || 0;
+      acc.reg += Number(s.regWbillQty) || 0;
+      acc.logout += Number(s.logoutWbillQty) || 0;
+      acc.days++;
+    });
+    // 厂家 / 仓库：先按日汇总 today，再更新期初 / 期末
+    Object.keys(byCode).forEach(c => {
+      const rows = (snap.details && snap.details[c]) || [];
+      const dayTm = {};
+      const dayWh = {};
+      rows.forEach(r => {
+        if (c === "ps" && r.trademark && String(r.trademark).trim()) {
+          const tm = String(r.trademark).trim();
+          dayTm[tm] = (dayTm[tm] || 0) + (Number(r.today) || 0);
+          const a = byTm[tm];
+          a.reg += Number(r.reg) || 0;
+          a.logout += Number(r.logout) || 0;
+        }
+        const wkey = c + "|" + r.warehouse + "|" + (r.trademark || "");
+        dayWh[wkey] = (dayWh[wkey] || 0) + (Number(r.today) || 0);
+        const w = byWh[wkey];
+        w.reg += Number(r.reg) || 0;
+        w.logout += Number(r.logout) || 0;
+      });
+      Object.entries(dayTm).forEach(([tm, q]) => {
+        const a = byTm[tm];
+        if (a.startQty === null) a.startQty = q;
+        a.endQty = q;
+        a.days++;
+      });
+      Object.entries(dayWh).forEach(([k, q]) => {
+        const w = byWh[k];
+        if (w.startQty === null) w.startQty = q;
+        w.endQty = q;
+      });
+    });
+  });
+  // 区间首日无任何记录的对象，期初记为 0
+  Object.values(byTm).forEach(a => { if (a.startQty === null) a.startQty = 0; });
+  Object.values(byWh).forEach(w => { if (w.startQty === null) w.startQty = 0; });
+  const byTmList = Object.values(byTm).sort((a, b) => (b.endQty - b.startQty) - (a.endQty - a.startQty));
+  const byWhList = Object.values(byWh).sort((a, b) => (b.endQty - b.startQty) - (a.endQty - a.startQty));
+  return { dates, byCode, byTmList, byWhList };
+}
+function renderRangeResult(res) {
+  const box = document.getElementById("range-result");
+  if (!box) return;
+  const codes = Object.keys(res.byCode);
+  let html = "";
+  if (codes.length) {
+    html += '<div class="range-cards">';
+    codes.forEach(c => {
+      const a = res.byCode[c];
+      const meta = VARIETY_META[c] || { name: a.name };
+      const net = a.endQty - a.startQty;
+      html += `
+        <div class="card ${meta.cls} range-card">
+          <div class="card-header"><div class="card-title">${a.name}</div><div class="card-code">${c.toUpperCase()}</div></div>
+          <div class="range-grid">
+            <div class="range-item"><div class="label">期初仓单</div><div class="value">${fmt(a.startQty)}</div></div>
+            <div class="range-item"><div class="label">期末仓单</div><div class="value">${fmt(a.endQty)}</div></div>
+            <div class="range-item"><div class="label">净变化</div><div class="value ${posNegClass(net)}">${fmtDiff(net)}</div></div>
+            <div class="range-item"><div class="label">累计注册</div><div class="value pos">${fmt(a.reg)}</div></div>
+            <div class="range-item"><div class="label">累计注销</div><div class="value neg">${fmt(a.logout)}</div></div>
+          </div>
+        </div>`;
+    });
+    html += '</div>';
+  }
+  if (res.byTmList.length) {
+    html += '<div class="range-table-wrap"><h3 class="range-sub-title">厂家注册 / 注销统计（多晶硅）<span class="hint">点击厂家行查看该厂家季节图</span></h3><div class="table-wrap"><table><colgroup><col style="width:26%"><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:16%"><col style="width:16%"></colgroup><thead><tr><th>厂家</th><th>期初仓单</th><th>期末仓单</th><th>净变化</th><th>累计注册</th><th>累计注销</th></tr></thead><tbody>';
+    res.byTmList.forEach(t => {
+      const net = t.endQty - t.startQty;
+      html += `<tr class="wh-row tm-row" data-code="ps" data-tm="${String(t.name).replace(/"/g, "&quot;")}" title="点击查看季节图">
+        <td>${t.name}</td><td>${fmt(t.startQty)}</td><td>${fmt(t.endQty)}</td>
+        <td class="${posNegClass(net)}">${fmtDiff(net)}</td>
+        <td class="pos">${fmt(t.reg)}</td><td class="neg">${fmt(t.logout)}</td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+  }
+  if (res.byWhList.length) {
+    html += '<div class="range-table-wrap"><h3 class="range-sub-title">仓库注册 / 注销统计<span class="hint">点击仓库行查看该仓库季节图</span></h3><div class="table-wrap"><table><colgroup><col style="width:7%"><col style="width:24%"><col style="width:10%"><col style="width:12%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:12%"></colgroup><thead><tr><th>品种</th><th>仓库 / 厂库</th><th>商标</th><th>期初仓单</th><th>期末仓单</th><th>净变化</th><th>累计注册</th><th>累计注销</th></tr></thead><tbody>';
+    res.byWhList.forEach(w => {
+      const net = w.endQty - w.startQty;
+      html += `<tr class="wh-row" data-code="${w.code}" data-wh="${String(w.wh).replace(/"/g, "&quot;")}" data-tm="${String(w.tm).replace(/"/g, "&quot;")}" title="点击查看季节图">
+        <td>${w.code.toUpperCase()}</td><td>${w.wh}</td><td>${w.tm || "—"}</td>
+        <td>${fmt(w.startQty)}</td><td>${fmt(w.endQty)}</td>
+        <td class="${posNegClass(net)}">${fmtDiff(net)}</td>
+        <td class="pos">${fmt(w.reg)}</td><td class="neg">${fmt(w.logout)}</td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+  }
+  if (!html) html = '<div class="range-empty">该区间内暂无数据</div>';
+  box.innerHTML = html;
 }
 
 // ===================== 主渲染 =====================
@@ -1421,6 +1698,25 @@ async function refreshData() {
   }
 }
 
+async function autoRefresh() {
+  try {
+    const res = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.summary) return;
+    if (data.data_date) {
+      ALL_DAYS[data.data_date] = data;
+      if (!Array.isArray(data.available_dates)) {
+        data.available_dates = Object.keys(ALL_DAYS).sort().reverse();
+      }
+    }
+    render(data);
+    setRangeInputs();
+  } catch (e) {
+    console.warn("autoRefresh failed", e);
+  }
+}
+
 // ===================== 事件绑定与初始化 =====================
 (function init() {
   try {
@@ -1431,6 +1727,16 @@ async function refreshData() {
       const wh = tr.getAttribute("data-wh") || "";
       const tm = tr.getAttribute("data-tm") || "";
       openWarehouseModal(code, wh, tm);
+    });
+    const rrEl = document.getElementById("range-result");
+    if (rrEl) rrEl.addEventListener("click", (e) => {
+      const tr = e.target.closest("tr.wh-row");
+      if (!tr) return;
+      const code = tr.getAttribute("data-code");
+      const wh = tr.getAttribute("data-wh");
+      const tm = tr.getAttribute("data-tm") || "";
+      if (wh != null) openWarehouseModal(code, wh, tm);
+      else openTrademarkModal(code, tm);
     });
     document.getElementById("wh-modal-close").addEventListener("click", closeWarehouseModal);
     document.getElementById("wh-modal").addEventListener("click", (e) => {
@@ -1445,6 +1751,7 @@ async function refreshData() {
     });
 
     render(EMBEDDED_DATA);
+    setRangeInputs();
     if (!isHttp()) {
       showMsg("本地嵌入数据版本，双击即可查看。部署到网站后可切换约两年历史交易日。", "info");
     } else {
@@ -1455,7 +1762,9 @@ async function refreshData() {
             window.__lastData.available_dates = dates;
             render(window.__lastData);
           }
+          setRangeInputs();
         }
+        autoRefresh();
       });
     }
   } catch (e) {
